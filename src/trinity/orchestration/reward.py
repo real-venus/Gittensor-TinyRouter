@@ -507,10 +507,19 @@ def normalize_math_answer(ans: str | None) -> str:
     # ``\circ`` (function composition) is untouched.
     s = re.sub(r"\^\{?\\circ\}?", "", s)
     s = s.replace(r"\degree", "")
+    # The Unicode degree glyph ``°`` (U+00B0) is the plain-text twin of ``^\circ`` /
+    # ``\degree`` above; fold it too so ``90°`` matches a plain ``90`` (else a correct
+    # angle answer written with the glyph is a false negative while the LaTeX form works).
+    s = s.replace("°", "")
     s = s.replace(r"\$", "")
     s = s.strip()
     if s.startswith("="):
         s = s[1:].strip()
+    # A set / tuple / list answer (e.g. "{2, 100}", "(5, 120)", "[1, 2, 3]") uses commas
+    # as ELEMENT separators, not digit grouping. Detect it HERE, before the delimiters are
+    # stripped below, so the thousands-comma strip further down does not merge two elements
+    # into one number (e.g. "{2, 100}" -> "2100", a false positive against the scalar 2100).
+    _is_collection = bool(re.fullmatch(r"\\?[\{\[(].*,.*[\})\]]\\?", s, re.DOTALL))
     # Strip a single outer pair of \{ \} or { }. The capture is LAZY so the
     # trailing optional backslash can consume a "\}" escape; a greedy ".*" eats it
     # first, leaving a stray backslash ("\{1,2\}" -> "1,2\") that fails to match a
@@ -555,8 +564,11 @@ def normalize_math_answer(ans: str | None) -> str:
     # a thousands-separated answer is not a false negative. Only a comma between a
     # digit and a group of exactly three digits at a non-digit boundary is removed,
     # leaving list-like "1,2,3" untouched. Matches extract_last_number, which
-    # already drops these commas.
-    s = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", s)
+    # already drops these commas. Skipped for set/tuple/list answers (``_is_collection``)
+    # whose element-separator commas look identical to a thousands group once the
+    # delimiters are gone (e.g. "{2, 100}" would otherwise collapse to "2100").
+    if not _is_collection:
+        s = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", s)
     s = s.lower()
     # Canonicalize a pure integer ratio a/b. A leading sign may sit OUTSIDE the
     # parentheses: a negated LaTeX fraction (\-frac{3}{4}) normalizes to
